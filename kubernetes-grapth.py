@@ -1,7 +1,14 @@
 import argparse
 from kubernetes import client, config
 from graphviz import Digraph
+import logging
 
+logging.basicConfig(
+    level=logging.INFO,
+    format='[%(asctime)s.%(msecs)03d] [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+logger = logging.getLogger(__name__)
 
 def load_kube_config():
     """
@@ -68,6 +75,7 @@ def add_nodes(dot, items, shape, color, prefix):
     for obj in items:
         nid = f"{obj.metadata.namespace}/{obj.metadata.name}"
         dot.node(nid, label=f"{prefix}\n{obj.metadata.name}", shape=shape, style='filled', fillcolor=color)
+        logger.info("Added node %s - %s", prefix, nid)
 
 # Link functions
 
@@ -195,7 +203,7 @@ def main():
 
     # Render
     out = dot.render(filename=args.output, cleanup=True)
-    print(f"Graph generated: {out} (namespace: {ns or 'all'})")
+    logger.info(f"Graph generated: {out} (namespace: {ns or 'all'})")
 
 if __name__ == '__main__':
     main()
