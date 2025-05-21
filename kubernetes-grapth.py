@@ -10,7 +10,7 @@ def load_kube_config():
     config.load_kube_config()
 
 
-def create_graph(format='png', dpi=300, size=13):
+def create_graph(format='png', dpi=600, size=20):
     """
     Initialize and return a Graphviz Digraph with layout and size settings.
     """
