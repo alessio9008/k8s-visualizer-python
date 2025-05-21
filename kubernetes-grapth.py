@@ -3,12 +3,26 @@ from kubernetes import client, config
 from graphviz import Digraph
 import logging
 
+JOB_LABEL = 'job'
+DAEMON_LABEL = 'daemon'
+REPLICA_LABEL = 'replica'
+REPLICA_SET_PREFIX = 'ReplicaSet'
+CRON_JOB_PREFIX = 'CronJob'
+JOB_PREFIX = 'Job'
+INGRESS_PREFIX = 'Ingress'
+SERVICE_PREFIX = 'Service'
+POD_PREFIX = 'Pod'
+DAEMON_SET_PREFIX = 'DaemonSet'
+STATEFUL_SET_PREFIX = 'StatefulSet'
+DEPLOYMENT_PREFIX = 'Deployment'
+
 logging.basicConfig(
     level=logging.INFO,
     format='[%(asctime)s.%(msecs)03d] [%(levelname)s] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 logger = logging.getLogger(__name__)
+
 
 def load_kube_config():
     """
@@ -24,6 +38,7 @@ def create_graph(format='png', dpi=600, size=20):
     dot = Digraph('k8s', format=format)
     dot.attr(rankdir='LR', size=str(size), dpi=str(dpi))
     return dot
+
 
 # Fetch functions
 
@@ -66,6 +81,7 @@ def fetch_cronjobs(ns=None):
     api = client.BatchV1Api()
     return api.list_namespaced_cron_job(ns).items if ns else api.list_cron_job_for_all_namespaces().items
 
+
 # Add node functions
 
 def add_nodes(dot, items, shape, color, prefix):
@@ -73,23 +89,25 @@ def add_nodes(dot, items, shape, color, prefix):
     Generic: add nodes for k8s objects with given style.
     """
     for obj in items:
-        nid = f"{obj.metadata.namespace}/{obj.metadata.name}"
+        nid = f"{prefix}-{obj.metadata.namespace}/{obj.metadata.name}"
         dot.node(nid, label=f"{prefix}\n{obj.metadata.name}", shape=shape, style='filled', fillcolor=color)
         logger.info("Added node %s - %s", prefix, nid)
 
+
 # Link functions
 
-def link_owner_to_pods(dot, pods, owner_kind, label):
+def link_owner_to_pods(dot, pods, owner_kind, label, prefix):
     """
     Link owner objects (ReplicaSet, StatefulSet, DaemonSet, Job) to their Pod children via ownerReferences.
     """
     for pod in pods:
-        pod_id = f"{pod.metadata.namespace}/{pod.metadata.name}"
+        pod_id = f"{POD_PREFIX}-{pod.metadata.namespace}/{pod.metadata.name}"
         for owner in pod.metadata.owner_references or []:
             if owner.kind == owner_kind:
                 base = '-'.join(owner.name.split('-')[:-1])
-                owner_id = f"{pod.metadata.namespace}/{base}" if owner_kind != 'Job' else f"{pod.metadata.namespace}/{owner.name}"
+                owner_id = f"{prefix}-{pod.metadata.namespace}/{base}" if owner_kind != 'Job' else f"{prefix}-{pod.metadata.namespace}/{owner.name}"
                 dot.edge(owner_id, pod_id, label=label)
+                logger.info("linked owner to pod ownerd_id: %s pod_id: %s ",owner_id, pod_id)
 
 
 def link_services_to_pods(dot, services, pods):
@@ -98,10 +116,10 @@ def link_services_to_pods(dot, services, pods):
     - If Service has a selector, match pods by labels.
     - Otherwise, match pods exposing the same targetPort on any container.
     """
-    svc_linked=[]
+    svc_linked = []
 
     for svc in services:
-        svc_id = f"{svc.metadata.namespace}/{svc.metadata.name}"
+        svc_id = f"{SERVICE_PREFIX}-{svc.metadata.namespace}/{svc.metadata.name}"
         selector = svc.spec.selector or {}
         # Gather possible ports sp.targetPort values
         for pod in pods:
@@ -110,8 +128,9 @@ def link_services_to_pods(dot, services, pods):
             labels = pod.metadata.labels or {}
             # Try matching by selector
             if selector and all(labels.get(k) == v for k, v in selector.items()):
-                pod_id = f"{pod.metadata.namespace}/{pod.metadata.name}"
+                pod_id = f"{POD_PREFIX}-{pod.metadata.namespace}/{pod.metadata.name}"
                 dot.edge(svc_id, pod_id, label='svc')
+                logger.info("linked service to pod svc_id: %s pod_id: %s ",svc_id, pod_id)
                 svc_linked.append(svc)
 
     for svc in services:
@@ -119,7 +138,7 @@ def link_services_to_pods(dot, services, pods):
         if svc in svc_linked:
             continue
 
-        svc_id = f"{svc.metadata.namespace}/{svc.metadata.name}"
+        svc_id = f"{SERVICE_PREFIX}-{svc.metadata.namespace}/{svc.metadata.name}"
         # Gather possible ports sp.targetPort values
         ports = [p.target_port for p in svc.spec.ports]
         for pod in pods:
@@ -129,9 +148,9 @@ def link_services_to_pods(dot, services, pods):
             for container in pod.spec.containers:
                 for p in container.ports or []:
                     if p.container_port in ports:
-                        pod_id = f"{pod.metadata.namespace}/{pod.metadata.name}"
+                        pod_id = f"{POD_PREFIX}-{pod.metadata.namespace}/{pod.metadata.name}"
                         dot.edge(svc_id, pod_id, label='svc')
-
+                        logger.info("linked service to pod svc_id: %s pod_id: %s ",svc_id, pod_id)
 
 
 def link_ingresses_to_services(dot, ingresses):
@@ -139,23 +158,26 @@ def link_ingresses_to_services(dot, ingresses):
     Link Ingress objects to Services based on HTTP paths.
     """
     for ing in ingresses:
-        ing_id = f"{ing.metadata.namespace}/{ing.metadata.name}"
+        ing_id = f"{INGRESS_PREFIX}-{ing.metadata.namespace}/{ing.metadata.name}"
         for rule in ing.spec.rules or []:
             for path in rule.http.paths:
-                svc_id = f"{ing.metadata.namespace}/{path.backend.service.name}"
+                svc_id = f"{SERVICE_PREFIX}-{ing.metadata.namespace}/{path.backend.service.name}"
                 dot.edge(ing_id, svc_id, label=path.path)
+                logger.info("linked ingress to service ing_id: %s svc_id: %s ",ing_id, svc_id)
 
 
 def link_cronjobs_to_jobs(dot, jobs, cronjobs):
     """
     Link CronJob objects to their Job children via ownerReferences.
     """
-    cron_ids = {cj.metadata.uid: f"{cj.metadata.namespace}/{cj.metadata.name}" for cj in cronjobs}
+    cron_ids = {cj.metadata.uid: f"{CRON_JOB_PREFIX}-{cj.metadata.namespace}/{cj.metadata.name}" for cj in cronjobs}
     for job in jobs:
-        job_id = f"{job.metadata.namespace}/{job.metadata.name}"
+        job_id = f"{JOB_PREFIX}-{job.metadata.namespace}/{job.metadata.name}"
         for owner in job.metadata.owner_references or []:
             if owner.kind == 'CronJob' and owner.uid in cron_ids:
                 dot.edge(cron_ids[owner.uid], job_id, label='schedule')
+                logger.info("linked cronjob to job cron_id: %s job_id: %s ",cron_ids[owner.uid], job_id)
+
 
 # Main execution
 
@@ -183,20 +205,20 @@ def main():
 
     # Build graph
     dot = create_graph()
-    add_nodes(dot, deps, 'folder', 'lightblue', 'Deployment')
-    add_nodes(dot, sts, 'cylinder', 'lightcoral', 'StatefulSet')
-    add_nodes(dot, dss, 'box3d', 'lightyellow', 'DaemonSet')
-    add_nodes(dot, pods, 'oval', 'white', 'Pod')
-    add_nodes(dot, svcs, 'box', 'orange', 'Service')
-    add_nodes(dot, ings, 'hexagon', 'lightgreen', 'Ingress')
-    add_nodes(dot, jobs, 'diamond', 'plum', 'Job')
-    add_nodes(dot, cronjobs, 'parallelogram', 'lightgrey', 'CronJob')
+    add_nodes(dot, deps, 'folder', 'lightblue', DEPLOYMENT_PREFIX)
+    add_nodes(dot, sts, 'cylinder', 'lightcoral', STATEFUL_SET_PREFIX)
+    add_nodes(dot, dss, 'box3d', 'lightyellow', DAEMON_SET_PREFIX)
+    add_nodes(dot, pods, 'oval', 'white', POD_PREFIX)
+    add_nodes(dot, svcs, 'box', 'orange', SERVICE_PREFIX)
+    add_nodes(dot, ings, 'hexagon', 'lightgreen', INGRESS_PREFIX)
+    add_nodes(dot, jobs, 'diamond', 'plum', JOB_PREFIX)
+    add_nodes(dot, cronjobs, 'parallelogram', 'lightgrey', CRON_JOB_PREFIX)
 
     # Create links
-    link_owner_to_pods(dot, pods, 'ReplicaSet', 'replica')
-    link_owner_to_pods(dot, pods, 'StatefulSet', 'replica')
-    link_owner_to_pods(dot, pods, 'DaemonSet', 'daemon')
-    link_owner_to_pods(dot, pods, 'Job', 'job')
+    link_owner_to_pods(dot, pods, REPLICA_SET_PREFIX, REPLICA_LABEL, DEPLOYMENT_PREFIX)
+    link_owner_to_pods(dot, pods, STATEFUL_SET_PREFIX, REPLICA_LABEL, STATEFUL_SET_PREFIX)
+    link_owner_to_pods(dot, pods, DAEMON_SET_PREFIX, DAEMON_LABEL, DAEMON_SET_PREFIX)
+    link_owner_to_pods(dot, pods, JOB_PREFIX, JOB_LABEL, JOB_PREFIX)
     link_services_to_pods(dot, svcs, pods)
     link_ingresses_to_services(dot, ings)
     link_cronjobs_to_jobs(dot, jobs, cronjobs)
@@ -204,6 +226,7 @@ def main():
     # Render
     out = dot.render(filename=args.output, cleanup=True)
     logger.info(f"Graph generated: {out} (namespace: {ns or 'all'})")
+
 
 if __name__ == '__main__':
     main()
