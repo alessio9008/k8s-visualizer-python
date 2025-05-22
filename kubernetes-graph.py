@@ -181,6 +181,39 @@ def link_cronjobs_to_jobs(dot, jobs, cronjobs):
 
 # Main execution
 
+def fetch_resources(ns):
+    deps = fetch_deployments(ns)
+    sts = fetch_statefulsets(ns)
+    dss = fetch_daemonsets(ns)
+    pods = fetch_pods(ns)
+    svcs = fetch_services(ns)
+    ings = fetch_ingresses(ns)
+    jobs = fetch_jobs(ns)
+    cronjobs = fetch_cronjobs(ns)
+    return cronjobs, deps, dss, ings, jobs, pods, sts, svcs
+
+
+def create_links(cronjobs, dot, ings, jobs, pods, svcs):
+    link_owner_to_pods(dot, pods, REPLICA_SET_PREFIX, REPLICA_LABEL, DEPLOYMENT_PREFIX)
+    link_owner_to_pods(dot, pods, STATEFUL_SET_PREFIX, REPLICA_LABEL, STATEFUL_SET_PREFIX)
+    link_owner_to_pods(dot, pods, DAEMON_SET_PREFIX, DAEMON_LABEL, DAEMON_SET_PREFIX)
+    link_owner_to_pods(dot, pods, JOB_PREFIX, JOB_LABEL, JOB_PREFIX)
+    link_services_to_pods(dot, svcs, pods)
+    link_ingresses_to_services(dot, ings)
+    link_cronjobs_to_jobs(dot, jobs, cronjobs)
+
+
+def add_nodess(cronjobs, deps, dot, dss, ings, jobs, pods, sts, svcs):
+    add_nodes(dot, deps, 'folder', 'lightblue', DEPLOYMENT_PREFIX)
+    add_nodes(dot, sts, 'cylinder', 'lightcoral', STATEFUL_SET_PREFIX)
+    add_nodes(dot, dss, 'box3d', 'lightyellow', DAEMON_SET_PREFIX)
+    add_nodes(dot, pods, 'oval', 'white', POD_PREFIX)
+    add_nodes(dot, svcs, 'box', 'orange', SERVICE_PREFIX)
+    add_nodes(dot, ings, 'hexagon', 'lightgreen', INGRESS_PREFIX)
+    add_nodes(dot, jobs, 'diamond', 'plum', JOB_PREFIX)
+    add_nodes(dot, cronjobs, 'parallelogram', 'lightgrey', CRON_JOB_PREFIX)
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Generate a K8s cluster graph")
     parser.add_argument('-o', '--output', default='cluster', help='Output file')
@@ -194,34 +227,16 @@ def main():
     ns = args.namespace
 
     # Fetch resources
-    deps = fetch_deployments(ns)
-    sts = fetch_statefulsets(ns)
-    dss = fetch_daemonsets(ns)
-    pods = fetch_pods(ns)
-    svcs = fetch_services(ns)
-    ings = fetch_ingresses(ns)
-    jobs = fetch_jobs(ns)
-    cronjobs = fetch_cronjobs(ns)
+    cronjobs, deps, dss, ings, jobs, pods, sts, svcs = fetch_resources(ns)
 
     # Build graph
     dot = create_graph()
-    add_nodes(dot, deps, 'folder', 'lightblue', DEPLOYMENT_PREFIX)
-    add_nodes(dot, sts, 'cylinder', 'lightcoral', STATEFUL_SET_PREFIX)
-    add_nodes(dot, dss, 'box3d', 'lightyellow', DAEMON_SET_PREFIX)
-    add_nodes(dot, pods, 'oval', 'white', POD_PREFIX)
-    add_nodes(dot, svcs, 'box', 'orange', SERVICE_PREFIX)
-    add_nodes(dot, ings, 'hexagon', 'lightgreen', INGRESS_PREFIX)
-    add_nodes(dot, jobs, 'diamond', 'plum', JOB_PREFIX)
-    add_nodes(dot, cronjobs, 'parallelogram', 'lightgrey', CRON_JOB_PREFIX)
+
+    #add nodes to the graph
+    add_nodess(cronjobs, deps, dot, dss, ings, jobs, pods, sts, svcs)
 
     # Create links
-    link_owner_to_pods(dot, pods, REPLICA_SET_PREFIX, REPLICA_LABEL, DEPLOYMENT_PREFIX)
-    link_owner_to_pods(dot, pods, STATEFUL_SET_PREFIX, REPLICA_LABEL, STATEFUL_SET_PREFIX)
-    link_owner_to_pods(dot, pods, DAEMON_SET_PREFIX, DAEMON_LABEL, DAEMON_SET_PREFIX)
-    link_owner_to_pods(dot, pods, JOB_PREFIX, JOB_LABEL, JOB_PREFIX)
-    link_services_to_pods(dot, svcs, pods)
-    link_ingresses_to_services(dot, ings)
-    link_cronjobs_to_jobs(dot, jobs, cronjobs)
+    create_links(cronjobs, dot, ings, jobs, pods, svcs)
 
     # Render
     out = dot.render(filename=args.output, cleanup=True)

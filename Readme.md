@@ -50,7 +50,7 @@ brew install graphviz
 
 # Run
 ``` 
-python3 kubernetes-grapth.py -n httpbin -o kubernetes-cluster
+python3 kubernetes-graph.py -n httpbin -o kubernetes-cluster
 ``` 
 # Result
 
